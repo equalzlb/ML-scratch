@@ -13,7 +13,7 @@ args = {'train_steps': 409600,
         'time_steps': 15,
         'output_size': 5,
         'embedding_size': 20,
-        'sparse_dim': 20,
+        'kind_num': 22,
         'l2': None,
         'learning_rate': 0.0002,
         'num_rnn_nodes': 12,
@@ -21,56 +21,27 @@ args = {'train_steps': 409600,
         'keep_prob': 1,
         'feature_dim': 28,
         'target_dim': 1,
-        'gen_num': 2560,
-        'model_dir': './model/model_01'}
+        'gen_num': 25600,
+        'model_dir': './model/model_06'}
 
 
 def input_train_fn(batch_size, epoch, sparse_dim, feature_dim , gen_num):
     #     data_encode = seq_encoder_train.astype(np.float32)
     #     data_decode = seq_decoder_train.astype(np.float32)
-    sparse_encode = np.zeros((gen_num, 10, sparse_dim))
-    for i in range(gen_num):
-        for j in range(10):
-            ran_index = np.random.randint(sparse_dim, size=1)
-            sparse_encode[i][j][ran_index] = 1
-    sparse_encode = sparse_encode.astype(np.float32)
+
+    sparse_encode = np.random.randint(0, 22, size=(gen_num, 10, 1)).astype(np.float32)
     dense_encode = np.random.rand(gen_num, 10, feature_dim-sparse_dim).astype(np.float32)
     data_encode = np.concatenate((sparse_encode, dense_encode), axis=2)
     data_decode = np.random.rand(gen_num, 5, 1).astype(np.float32)
     dataset = tf.data.Dataset.from_tensor_slices(({'encode': data_encode}, {'decode': data_decode}))
-    dataset = dataset.batch(batch_size, drop_remainder=True)
     dataset = dataset.repeat(epoch)
-    dataset = dataset.shuffle(1000)
-    return dataset
-
-
-def input_vali_fn(batch_size, feature_dim):
-    data_encode = np.random.rand(256, 10, feature_dim).astype(np.float32)
-    data_decode = np.random.rand(256, 5, 1).astype(np.float32)
-    dataset = tf.data.Dataset.from_tensor_slices(({'encode': data_encode}, {'decode': data_decode}))
     dataset = dataset.batch(batch_size, drop_remainder=True)
 
     return dataset
-
-
-def input_test_fn(batch_size, feature_dim):
-    test_data_encode = np.random.rand(256, 10, feature_dim).astype(np.float32)
-    test_data_decode = np.random.rand(256, 5, 1).astype(np.float32)
-    #     test_data_encode = build_seq_decoder_data_volume_ratio().astype(np.float32)
-    #     test_data_decode = build_seq_decoder_data_volume_ratio().astype(np.float32)
-    dataset = tf.data.Dataset.from_tensor_slices(({'encode': test_data_encode}, {'decode': test_data_decode}))
-    dataset = dataset.batch(batch_size, drop_remainder=True)
-    return dataset
-
-
-def pre_input_fn(batch_size, feature_dim, target_dim):
-    #     pre_data_encode = np.random.rand(batch_size,10,feature_dim).astype(np.float32)
-    #     pre_data_decode = np.random.rand(batch_size,5,target_dim).astype(np.float32)
-    pre_data_encode = build_seq_decoder_data_volume_ratio().astype(np.float32)
-    pre_data_decode = build_seq_decoder_data_volume_ratio().astype(np.float32)
-    dataset = tf.data.Dataset.from_tensor_slices(({'encode': pre_data_encode}, {'decode': pre_data_decode}))
-    dataset = dataset.batch(batch_size, drop_remainder=True)
-    return dataset
+#   数据输入样例，第一维为品种编号int，剩余为其他维度特征float
+#   [[1   9.0149e-01 4.6103e-01 ... 6.4749e-01 4.2211e-01 5.8802e-01]
+#   [7   7.9974e-01 6.0183e-01 ... 5.0029e-01 4.5104e-01 2.6223e-01]
+#   [4. 3.7743e-01 9.8017e-01 ... 2.3832e-01 3.0181e-02 6.6913e-01]
 
 
 def _reshape_input(data, batch_size, input_size, embedding_size):
@@ -100,9 +71,9 @@ def _loss_weights(batch_size):
     return loss_weights
 
 
-def embedding_layer(input_data_sparse, embedding_size, sparse_dim):
+def embedding_layer(input_data_sparse, embedding_size, kind_num):
     input_data_sparse = tf.cast(input_data_sparse, dtype=tf.int32)
-    embedding = tf.get_variable('embedding_matix', [embedding_size])
+    embedding = tf.get_variable('embedding_matix', [kind_num, embedding_size])
     embedded_input = tf.nn.embedding_lookup(embedding, input_data_sparse)
 
     return embedded_input
@@ -128,24 +99,32 @@ def _make_cell(rnn_size, keep_prob):
     return dropout_cell
 
 
-def encoding_layer(input_data, input_size, num_rnn_nodes, num_rnn_layers, keep_prob, embedding_size, sparse_dim):
-    encoder_cell = tf.contrib.rnn.MultiRNNCell([_make_cell(num_rnn_nodes, keep_prob) for _ in range(num_rnn_layers)])
-    print(input_data.shape)
-    input_data_dense = input_data[:, :, sparse_dim:]
-    input_data_sparse = input_data[:, :, :sparse_dim]
-    embedded_input = embedding_layer(input_data_sparse, embedding_size, sparse_dim)
-    input_data_concat = tf.concat([embedded_input, input_data_dense], axis=2)
-    encoder_output, encoder_state = tf.nn.dynamic_rnn(
-        encoder_cell, input_data_concat,
-        sequence_length=[input_size] * _get_batch_size(input_data),
-        dtype=tf.float32)
+def encoding_layer(input_data, input_size, num_rnn_nodes, num_rnn_layers, keep_prob, embedding_size, kind_num):
 
+    encoder_cell = tf.contrib.rnn.MultiRNNCell([_make_cell(num_rnn_nodes, keep_prob) for _ in range(num_rnn_layers)])
+    input_data_dense = input_data[:, :, 1:]
+    input_data_sparse = input_data[:, :, :1]
+    input_data_sparse = tf.squeeze(input_data_sparse)
+    embedded_input = embedding_layer(input_data_sparse, embedding_size, kind_num)
+    input_data_concat = tf.concat([embedded_input, input_data_dense], axis=2)
+    encoder_output, encoder_state = tf.nn.dynamic_rnn(encoder_cell, input_data_concat,
+                                                        sequence_length=[input_size] * _get_batch_size(input_data),
+                                                        dtype=tf.float32)
+    print(encoder_state)
     return encoder_output, encoder_state
 
 
 def decoding_layer(batch_size, num_rnn_nodes, num_rnn_layers, output_size,
                    encoder_state, output_data, target_dim, go_token, regularizer, keep_prob):
+
+    attention_mechanism = tf.contrib.seq2seq.BahdanauAttention(num_units=num_rnn_nodes, memory=output_data)
+
     decoder_cell = tf.contrib.rnn.MultiRNNCell([_make_cell(num_rnn_nodes, keep_prob) for _ in range(num_rnn_layers)])
+
+    attent_cell = tf.contrib.seq2seq.AttentionWrapper(cell=decoder_cell, attention_mechanism=attention_mechanism,
+                                                    attention_layer_size=num_rnn_nodes, name='Attention_Wrapper')
+
+    decoder_initial_state = attent_cell.zero_state(batch_size=batch_size, dtype=tf.float32).clone(cell_state=encoder_state)
 
     projection_layer = tf.layers.Dense(units=target_dim,
                                        kernel_initializer=tf.glorot_normal_initializer(),
@@ -157,12 +136,14 @@ def decoding_layer(batch_size, num_rnn_nodes, num_rnn_layers, output_size,
             decoder_input = _prepend_go_token(output_data, go_token, target_dim)
 
             training_helper = tf.contrib.seq2seq.TrainingHelper(inputs=decoder_input,
-                                                                sequence_length=[output_size] * batch_size)
-            training_decoder = tf.contrib.seq2seq.BasicDecoder(decoder_cell, training_helper,
-                                                               encoder_state, projection_layer)
+                                                                sequence_length=[output_size]*batch_size)
+            training_decoder = tf.contrib.seq2seq.BasicDecoder(cell=attent_cell,
+                                                               helper=training_helper,
+                                                               initial_state=decoder_initial_state,
+                                                               output_layer=projection_layer)
             training_decoder_output, _, _ = tf.contrib.seq2seq.dynamic_decode(
                 training_decoder, impute_finished=True,
-                maximum_iterations=output_size)
+                initial_state=decoder_initial_state, maximum_iterations=output_size)
     with tf.variable_scope('decode', reuse=tf.AUTO_REUSE):
         start_tokens = tf.constant(go_token, shape=[batch_size, target_dim])
         inference_helper = tf.contrib.seq2seq.InferenceHelper(
@@ -171,8 +152,8 @@ def decoding_layer(batch_size, num_rnn_nodes, num_rnn_layers, output_size,
             sample_dtype=tf.float32,
             start_inputs=start_tokens,
             end_fn=lambda sample_ids: False)
-        inference_decoder = tf.contrib.seq2seq.BasicDecoder(decoder_cell, inference_helper,
-                                                            encoder_state, projection_layer)
+        inference_decoder = tf.contrib.seq2seq.BasicDecoder(attent_cell, inference_helper,
+                                                            decoder_initial_state, projection_layer)
 
         inference_decoder_output, _, _ = tf.contrib.seq2seq.dynamic_decode(
             inference_decoder, impute_finished=True,
@@ -192,7 +173,7 @@ def rnn_model_fn(features, labels, mode, params):
     target_dim = params['target_dim']
     keep_prob = params['keep_prob']
     embedding_size = params['embedding_size']
-    sparse_dim = params['sparse_dim']
+    kind_num = params['kind_num']
     if l2_regularization:
         regularizer = tf.contrib.layers.l2_regularizer(scale=l2_regularization)
     else:
@@ -209,7 +190,7 @@ def rnn_model_fn(features, labels, mode, params):
     go_token = -1.0
 
     _, encoder_state = encoding_layer(input_data, input_size, num_rnn_nodes, num_rnn_layers,
-                                      keep_prob, embedding_size, sparse_dim)
+                                      keep_prob, embedding_size, kind_num)
 
     training_decoder_output, inference_decoder_output = decoding_layer(batch_size, num_rnn_nodes,
                                                                        num_rnn_layers, output_size,
@@ -258,8 +239,8 @@ def train_and_evaluate_model(args):
               'feature_dim': args['feature_dim'],
               'target_dim': args['target_dim'],
               'keep_prob': args['keep_prob'],
-              'embedding_size': 20,
-              'sparse_dim': 20,
+              'embedding_size': args['embedding_size'],
+              'kind_num':  args['kind_num'],
               }
     log_step_count_steps = max(1, args['train_steps'] / args['batch_size'] /
                                args['evaluations'] // args['logs_per_training'])
@@ -269,7 +250,7 @@ def train_and_evaluate_model(args):
         params=params,
         config=tf.estimator.RunConfig(log_step_count_steps=log_step_count_steps))
     train_spec = tf.estimator.TrainSpec(
-        input_fn=lambda: input_train_fn(args['batch_size'], args['epoch'], args['sparse_dim'], args['feature_dim'],
+        input_fn=lambda: input_train_fn(args['batch_size'], args['epoch'], args['kind_num'], args['feature_dim'],
                                         args['gen_num']),
         max_steps=args['train_steps'] // args['batch_size'])
     eval_spec = tf.estimator.EvalSpec(input_fn=lambda: input_vali_fn(args['batch_size'], args['feature_dim']),
